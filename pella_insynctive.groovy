@@ -1,7 +1,8 @@
 /*
 Pella Insynctive Telnet Driver
 
-v1.0
+v1.0 - initial release
+v1.0.1 - fix issue with connectivity check
 
 */
 
@@ -19,7 +20,7 @@ metadata {
 		// command "evalConnection"
         // command "sendMessage", [[name: "message*", type: "STRING", description: "Message to send", defaultValue: "?POINTCOUNT"]]
         // command "sendMessageToParent", [[name: "message*", type: "STRING", description: "Message to send", defaultValue: "?POINTCOUNT"]]
-		// attribute "lastMessageReceipt", "Date"
+		attribute "lastMessageReceipt", "Date"
 		attribute "numberOfDevices", "Number"
 		attribute "rebootBridge", "ENUM", ["Yes","No"]
 	}
@@ -66,15 +67,19 @@ def evalConnection()
 {
 	sendMessage('?POINTCOUNT', null) /* test connection by getting a simple count of the number of devices connected to the Pella Bridge */
 	pauseExecution(1000)
-	if (state.lastMessageReceipt) {
-		duration = groovy.time.TimeCategory.minus(
-			new Date(),
-			Date.parse("yyyy-MM-dd'T'HH:mm:ssX", state.lastMessageReceipt)
-		)
+	if (device.currentValue('lastMessageReceipt')) {
+		// duration = groovy.time.TimeCategory.minus(
+			// new Date(),
+			// Date.parse("yyyy-MM-dd'T'HH:mm:ssX", state.lastMessageReceipt)
+		// )
 		// duration = groovy.time.TimeCategory.minus(
 			// new Date(),
 			// device.currentValue('lastMessageReceipt')
 		// )
+		duration = groovy.time.TimeCategory.minus(
+			new Date(),
+			Date.parse("EEE MMM dd HH:mm:ss zzz yyyy", device.currentValue('lastMessageReceipt'))
+		)
 		displayDebugLog("Minutes since last message received: ${duration.minutes}")
 		if (duration.minutes > 10 && duration.minutes <= 20) {
 			displayInfoLog("Have not received a message from Pella Bridge in > 10 minutes.")
@@ -113,8 +118,8 @@ def refresh()
 def parse(String message) {
 	displayDebugLog("Message received: ${message}")
 	sendEvent(name: "rebootBridge", value: "No", displayed: false)
-	// sendEvent(name: "lastMessageReceipt", value: new Date(), displayed: false)
-	state.lastMessageReceipt = new Date()
+	sendEvent(name: "lastMessageReceipt", value: new Date(), displayed: false)
+	// state.lastMessageReceipt = new Date()
 
 	/* Send message data to appropriate parsing function based on the telnet message received */
 	if (message.contains("POINTSTATUS-")) {
