@@ -3,6 +3,7 @@ Pella Insynctive Telnet Driver
 
 v1.0 - initial release
 v1.0.1 - fix issue with connectivity check
+v1.0.2 - rebuildChildDevices without deleting and re-adding all -- preserve existing devices
 
 */
 
@@ -179,7 +180,7 @@ def parseUpdate(message) {
 
 def parseStatusResponse(lastMessageSent, message) {
 	displayDebugLog("Status string to parse = '${message}'")
-	def matches = ("${lastMessageSent}" =~ /0\d{2}/) /* grabs integers of Pella device number */
+	def matches = ("${lastMessageSent}" =~ /(?<=\-)\d{3}\W*$/) /* grabs integers of Pella device number */
 	def firstmatch = matches[0]
 	displayDebugLog("Device to send state to = $device.deviceNetworkId-$firstmatch")
 	def childDevice = childDevices.find{it.deviceNetworkId == "$device.deviceNetworkId-$firstmatch"}
@@ -196,7 +197,7 @@ def parseStatusResponse(lastMessageSent, message) {
 
 def parseBatteryResponse(lastMessageSent, message) {
 	displayDebugLog("Battery string to parse = '${message}'")
-	def matches = ("${lastMessageSent}" =~ /0\d{2}/) /* grabs integers of Pella device number */
+	def matches = ("${lastMessageSent}" =~ /(?<=\-)\d{3}\W*$/) /* grabs integers of Pella device number */
 	def firstmatch = matches[0]
 	def batterymatches = ("${message}" =~ /\w{2}/) /* grabs reported battery value */
 	def firstbatterymatch = batterymatches[0]
@@ -238,17 +239,27 @@ def install() {
 		displayDebugLog("Cannot Connect")
 		return
 	}
-    displayDebugLog("Creating Child Devices")
+    displayDebugLog("Creating new child devices")
     for (i in 1..(device.currentValue('numberOfDevices'))) {
-        addChildDevice('hubitat', "Pella Insynctive", "$device.deviceNetworkId-00$i", [name: "Pella Insynctive Device", isComponent: true])
+        try {
+			addChildDevice('hubitat', "Pella Insynctive", "$device.deviceNetworkId-${i.toString().padLeft(3, "0")}", [name: "Pella Insynctive Device", isComponent: true])
+		} catch(Exception ex) {
+		}
 	}
 }
 
 def deleteChildren() {
-	displayDebugLog("Deleting Child Devices")
+	displayDebugLog("Deleting unused child devices")
 	def children = getChildDevices()
-    children.each {child->
-  		deleteChildDevice(child.deviceNetworkId)
+    children.each {
+		child->displayDebugLog("Evaluating ${child.deviceNetworkId}")
+		matches = ("${child.deviceNetworkId}" =~ /(?<=\-)\d{3}\W*$/) /* grabs integers of Pella device number */
+		firstmatch = matches[0]
+		childNum = firstmatch.toInteger()
+		if (childNum > device.currentValue('numberOfDevices')) {
+			displayDebugLog("Deleting ${child.deviceNetworkId}")
+			deleteChildDevice(child.deviceNetworkId)
+		}
     }
 }
 
