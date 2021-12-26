@@ -4,7 +4,8 @@ Pella Insynctive Telnet Driver
 v1.0 - initial release
 v1.0.1 - fix issue with connectivity check
 v1.0.2 - rebuildChildDevices without deleting and re-adding all -- preserve existing devices
-v1.0.3 - fix issue with connectivity check, embed child device names in file (and write to device label on refresh), miscellaneous bug fixes and changes to work with newer Hubitat firmwares.
+v1.0.3 - fix issue with connectivity check, embed child device names in file (and write to device label on refresh)
+v1.0.4 - miscellaneous bug fixes and changes to work with newer Hubitat firmwares.
 
 */
 
