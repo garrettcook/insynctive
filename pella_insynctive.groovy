@@ -10,6 +10,7 @@ v1.0.5 - fix issue with hub reset function not working in some scenarios.  Refre
 v1.0.6 - improve logging
 v1.0.7 - refresh all child labels during parent refresh
 v1.0.8 - various improvements
+v1.1.0 - significant improvements to scheduling apparatus and error handling
 
 */
 
@@ -22,16 +23,16 @@ metadata {
 		capability "Initialize"
 
 		command "install"
-		command "reconnect"
+		// command "reconnect"
 		command "rebuildChildDevices"
 		// command "evalConnection"
-        // command "sendMessage", [[name: "message*", type: "STRING", description: "Message to send", defaultValue: "?POINTCOUNT"]]
+        // command "sendMsg", [[name: "message*", type: "STRING", description: "Message to send", defaultValue: "?POINTCOUNT"]]
         // command "sendMessageToParent", [[name: "message*", type: "STRING", description: "Message to send", defaultValue: "?POINTCOUNT"]]
 		attribute "lastMessageReceipt", "Date"
 		attribute "numberOfDevices", "Number"
 		attribute "rebootBridge", "ENUM", ["Yes","No"]
 
-		singleThreaded: true
+		// singleThreaded: true
 	}
 
     preferences {
@@ -39,90 +40,120 @@ metadata {
 		input name: "debugLogging", type: "bool", title: "Enable debug logging", description: ""
 		input name: "ipAddress", type: "text", title: "Pella Bridge Local IP Address", description: "", required: true
 		input name: "active", type: "bool", title: "Service Active", description: "", defaultValue: true
-		// input name: "retry", type: "number", title: "Connection Retry Interval", description: "Frequency (in minutes) to test and retry connection, if failed"
+		input name: "retry", type: "number", title: "Connection Retry Interval", description: "Frequency (in minutes) to test and retry connection, if failed", defaultValue: 5, range: "1..60", required: true
     }
 }
 
 def initialize()
 {
 	if (!parent) {
+		unschedule()
+		atomicState.remove("lastMessageSent")
+		// unschedule("evalConnection")
 		if(active) {
 			if (ipAddress == null || ipAddress == "") {
 				log.error("Cannot Connect: IP Address is required")
 				return false
 			}
 			def hub = location.hubs[0]
-			displayDebugLog("Hub Uptime: ${hub.uptime}") /* (uptime may impact ability to connect to telnet if hubitat was just started up.  May be useful for setting a delay if attempts to connect to telnet too soon) */
+			// displayDebugLog("Hub Uptime: ${hub.uptime}") /* (uptime may impact ability to connect to telnet if hubitat was just started up.  May be useful for setting a delay if attempts to connect to telnet too soon) */
 			if (hub.uptime < 120)
-				pauseExecution(120000) /* wait if the hub has not been running for at least two minutes -- allows telnet services to load on the hub and also allows Pella bridge time to boot up if the restart was due to a power outage */
-			displayInfoLog("Closing existing telnet connection")
+				pauseExecution(120000 - (hub.uptime * 1000)) /* wait if the hub has not been running for at least two minutes -- allows telnet services to load on the hub and also allows Pella bridge time to boot up if the restart was due to a power outage */
+			displayInfoLog("Closing existing telnet connection (if any)")
 			telnetClose() /* closes telnet if it was already open */
-			pauseExecution(2000)
+			pauseExecution(10000)
 			displayInfoLog("Opening telnet connection")
 			try {
 				telnetConnect("${ipAddress}", 23, null, null)
 			} catch(Exception ex) {
-				log.warn(ex.toString() + ex.getMessage())
-    			// displayInfoLog("Could not open telnet connection")
+				log.warn(ex.toString())
+				runIn(60 * retry, "initialize")
+    			displayInfoLog("Will try again in ${(60 * retry)} seconds") /* Note: usually takes 4-5 minutes to recover from a telnet error */
+				// runIn(60 * retry, "evalConnection")
 				return false
 			}
-			displayInfoLog("Establishing connection")
-			pauseExecution(3000)
-			sendMessage('?POINTCOUNT') /* test connection by getting a simple count of the number of devices connected to the Pella Bridge */
-			pauseExecution(2000)
-			schedule("0 1/4 * ? * * *", evalConnection) /* test connection every four minutes.  By default, any such previous schedule is overwritten */
+			displayInfoLog("Connection established")
+			// runIn(5, "evalConnection")
+			// pauseExecution(3000)
+			sendMsg('?POINTCOUNT') /* test connection by getting a simple count of the number of devices connected to the Pella Bridge */
+			pauseExecution(2000) /* allows bridge to initialize before sending further requests, before returning successful 'true' result */
+			runIn(60 * retry, "evalConnection")
+			// schedule("0 1/4 * ? * * *", evalConnection) /* test connection every four minutes.  By default, any such previous schedule is overwritten */
+			// evalConnection()
 			return true
 		} else {
-			unschedule()
 			telnetClose() /* closes telnet if it was already open */
 			return false
 		}
-	} else {
-		unschedule()
 	}
 }
 
-def reconnect()
-{
-	// atomicState.lastMessageSent = null
-	displayInfoLog("Attempting reconnect")
-	atomicState.remove("lastMessageSent")
-	pauseExecution(10000) /* wait a bit until attempting the reconnect */
-	initialize()
-}
+// def reconnect()
+// {
+	// // atomicState.lastMessageSent = null
+	// unschedule()
+	// // unschedule("evalConnection")
+	// // pauseExecution(20000) /* wait a bit until attempting the reconnect. */
+	// // runIn(60, "initialize") /* wait a bit until attempting the reconnect -- gives bridge time to reboot. */
+	// // if(retry > 0) {
+	// // } else {
+		// // pauseExecution(60000)
+	// // }
+	// initialize()
+// }
 
 /* attempt to reconnect if haven't received any response from the Pella Bridge in more than X minutes.  Could also use rebootBridge in a Rule to toggle power to the Pella Bridge based on rebootBridge value, if for example plugged into a smart plug. */
 def evalConnection()
 {
-	sendMessage('?POINTCOUNT') /* test connection by getting a simple count of the number of devices connected to the Pella Bridge */
-	pauseExecution(2000)
-	if (device.currentValue('lastMessageReceipt')) {
-		// duration = groovy.time.TimeCategory.minus(
-			// new Date(),
-			// Date.parse("yyyy-MM-dd'T'HH:mm:ssX", atomicState.lastMessageReceipt)
-		// )
-		// duration = groovy.time.TimeCategory.minus(
-			// new Date(),
-			// device.currentValue('lastMessageReceipt')
-		// )
-		duration = groovy.time.TimeCategory.minus(
-			new Date(),
-			Date.parse("EEE MMM dd HH:mm:ss zzz yyyy", device.currentValue('lastMessageReceipt'))
-		)
-		displayDebugLog("Minutes since last message received: ${duration.minutes}")
-		if (duration.minutes > 10) {
-			log.warn("Have not received a message from Pella Bridge in ${duration.minutes} minutes.")
-			if (duration.minutes > 30) {
-				displayInfoLog("Rebooting bridge.")
-				sendEvent(name: "rebootBridge", value: "Yes", displayed: false)
+	if(!parent && active) {
+		if(retry > 0) {
+			unschedule("evalConnection")
+			runIn(60 * retry, "evalConnection")
+		}
+		sendMsg('?POINTCOUNT') /* test connection by getting a simple count of the number of devices connected to the Pella Bridge */
+		pauseExecution(2000)
+		// if (state.lastMessageReceipt != null) {
+		if (device.currentValue('lastMessageReceipt')) {
+			// sendEvent(name: "lastMessageReceipt", value: new Date(), displayed: true)
+		// if (lastMessageReceipt != null) {
+			// duration = groovy.time.TimeCategory.minus(
+				// new Date(),
+				// Date.parse("yyyy-MM-dd'T'HH:mm:ssX", state.lastMessageReceipt)
+			// )
+			// duration = groovy.time.TimeCategory.minus(
+				// new Date(),
+				// device.currentValue('lastMessageReceipt')
+			// )
+			// duration = groovy.time.TimeCategory.minus(
+				// new Date(),
+				// state.lastMessageReceipt
+			// )
+			duration = groovy.time.TimeCategory.minus(
+				new Date(),
+				Date.parse("EEE MMM dd HH:mm:ss zzz yyyy", device.currentValue('lastMessageReceipt'))
+			)
+			if(retry > 0) {
+				displayDebugLog("Minutes since last message received: ${duration.minutes}")
+				if (duration.minutes > (retry + 1)) {
+					log.warn("Have not received a message from Pella Bridge in ${duration.minutes} minutes.")
+					if (duration.minutes > ((retry * 3) + 1)) {
+						displayInfoLog("Rebooting bridge")
+						sendEvent(name: "rebootBridge", value: "Yes", displayed: false)
+						displayInfoLog("Will attempt to re-initialize connection, after 60 second delay.")
+						runIn(60, "initialize") /* wait a bit until attempting the reconnect -- gives bridge time to reboot. */
+					} else {
+						initialize()
+					}
+				}
 			}
-			reconnect()
+		// } else {
+			// sendEvent(name: "lastMessageReceipt", value: new Date(), displayed: true)
 		}
 	}
 }
 
-// def sendMessage(String message, forPoint) 
-def sendMessage(String message) 
+// def sendMsg(String message, forPoint) 
+def sendMsg(String message) 
 {
 	displayDebugLog("Sending Telnet message: " + message)	
 	// atomicState.lastSentForPoint = forPoint
@@ -137,23 +168,23 @@ def refresh()
 	if (parent) {
 		def matches = (device.deviceNetworkId =~ /\d+$/) /* grabs digits at end of deviceNetworkId */
 		def firstmatch = matches[0]
-		device.deleteCurrentState("lastMessageReceipt")
-		device.deleteCurrentState("numberOfDevices")
-		device.deleteCurrentState("rebootBridge")
-		parent.sendMessage("?POINTSTATUS-${firstmatch}")
+		// device.deleteCurrentState("lastMessageReceipt")
+		// device.deleteCurrentState("numberOfDevices")
+		// device.deleteCurrentState("rebootBridge")
+		parent.sendMsg("?POINTSTATUS-${firstmatch}")
 		pauseExecution(1000) /* wait before sending the next command */
-		parent.sendMessage("?POINTBATTERYGET-${firstmatch}")
+		parent.sendMsg("?POINTBATTERYGET-${firstmatch}")
 		pauseExecution(1000) /* wait before sending the next command */
-		// parent.sendMessage("?POINTID-${firstmatch}", firstmatch)
-		parent.sendMessage("?POINTID-${firstmatch}")
+		// parent.sendMsg("?POINTID-${firstmatch}", firstmatch)
+		parent.sendMsg("?POINTID-${firstmatch}")
 	} else {
-		evalConnection()
+		// evalConnection()
 		pauseExecution(1000) /* wait before sending the next command */
 		for (i in 1..(device.currentValue('numberOfDevices'))) {
-			// sendMessage("?POINTID-${i.toString().padLeft(3, "0")}", "${i.toString().padLeft(3, "0")}")
-			sendMessage("?POINTID-${i.toString().padLeft(3, "0")}")
+			// sendMsg("?POINTID-${i.toString().padLeft(3, "0")}", "${i.toString().padLeft(3, "0")}")
+			sendMsg("?POINTID-${i.toString().padLeft(3, "0")}")
 			pauseExecution(1000) /* wait before sending the next command */
-			sendMessage("?POINTBATTERYGET-${i.toString().padLeft(3, "0")}")
+			sendMsg("?POINTBATTERYGET-${i.toString().padLeft(3, "0")}")
 			pauseExecution(1000) /* wait before sending the next command */
 			// try {
 				// addChildDevice('hubitat', "Pella Insynctive", "$device.deviceNetworkId-${i.toString().padLeft(3, "0")}", [name: "Pella Insynctive Device", isComponent: true])
@@ -169,8 +200,15 @@ def parse(String message) {
 
 	sendEvent(name: "rebootBridge", value: "No", displayed: false)
 	sendEvent(name: "lastMessageReceipt", value: new Date(), displayed: false)
-	// atomicState.lastMessageReceipt = new Date()
+	// pauseExecution(1000)
+	// def testing = device.currentValue('lastMessageReceipt')
+	// displayDebugLog("lastMessageReceipt: ${testing}")
+	// state.lastMessageReceipt = new Date()
 
+	if(!parent && active && retry > 0) {
+		unschedule("evalConnection")
+		runIn(60 * retry, "evalConnection")
+	}
 	/* Send message data to appropriate parsing function based on the telnet message received */
 	if (message.contains("POINTSTATUS-")) {
 		parseSupervisorySignal(message)
@@ -184,27 +222,27 @@ def parse(String message) {
 		} else if (atomicState.lastMessageSent == "?POINTCOUNT" && (message =~ /^\W*\d{3}\W*$/)) {
 			parseDevices(message)
 		} else if (message.contains("Insynctive Telnet Server")) {
-			displayInfoLog("Connection established")
+			// displayInfoLog("Connection established")
 		} else {
 			log.warn("Unable to parse message.  lastMessageSent: ${atomicState.lastMessageSent}; message: ${message}")
 		}
 	} else if (message.contains("Insynctive Telnet Server")) {
-		displayInfoLog("Connection established")
+		// displayInfoLog("Connection established")
 	} else if (message =~ /^\W*\d{3}\W*$/) {
 		parseDevices(message)
 	} else {
 		log.warn("Unable to parse message.  message: ${message}")
 	}
-	pauseExecution(500) /* wait 0.5 seconds before sending the next command */
+	pauseExecution(500) /* wait 0.5 seconds before clearing lastMessageSent */
 	atomicState.remove("lastMessageSent")
-	// pauseExecution(1000) /* wait 0.5 seconds before sending the next command */
 }
 
 def telnetStatus(String status) {
 	// displayInfoLog("telnetStatus: ${status}")
 	log.warn("telnetStatus: ${status}")
 	// sendEvent(name: "rebootBridge", value: "Yes")
-	reconnect()
+	pauseExecution(2000)
+	initialize()
 }
 
 /* Obtain the number of Insynctive devices connected to the Pella Bridge */
@@ -361,6 +399,7 @@ def rebuildChildDevices() {
 
 def install() {
 	if (!parent) {
+		unschedule("evalConnection")
 		if (initialize() == false) {
 			log.error("Cannot Connect")
 			return
