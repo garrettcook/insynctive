@@ -9,4 +9,4 @@ As your Insynctive devices send open/close updates to the Bridge these should up
 
 Sometimes when adding new devices, the Bridge reorders the Point IDs.  You should set the serial numbers and labels for your devices into the parseIDResponse function so that after refresh it will re-label them properly.  (Mine remain in the file as an example.)
 
-Future enhancements: obtain battery level from Bridge upon sensor status change, configure retry interval, select sensor type ("contact sensor", "deadbolt sensor", etc)
+Future enhancements: obtain battery level from Bridge upon sensor status change, and select sensor type ("contact sensor", "deadbolt sensor", etc)
