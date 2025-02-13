@@ -12,6 +12,7 @@ v1.0.7 - refresh all child labels during parent refresh
 v1.0.8 - various improvements
 v1.1.0 - significant improvements to scheduling apparatus, error handling, and other elements
 v1.1.1 - additional improvements to scheduling apparatus and error handling
+v1.1.2 - minor improvements to timing of qualifying a received message as a response to a sent message
 */
 
 metadata {
@@ -33,8 +34,8 @@ metadata {
 	}
 
     preferences {
-		input name: "infoLogging", type: "bool", title: "Enable telnet info logging", description: ""
-		input name: "debugLogging", type: "bool", title: "Enable debug logging", description: ""
+		input name: "txtEnable", type: "bool", title: "Enable telnet info logging", description: ""
+		input name: "logEnable", type: "bool", title: "Enable debug logging", description: ""
 		input name: "ipAddress", type: "text", title: "Pella Bridge Local IP Address", description: "", required: true
 		input name: "active", type: "bool", title: "Service Active", description: "", defaultValue: true
 		input name: "retry", type: "number", title: "Connection Retry Interval", description: "Frequency (in minutes) to test and retry connection, if failed", defaultValue: 5, range: "1..60", required: true
@@ -56,13 +57,13 @@ def initialize()
 				if (hub.uptime < 120) {
 					pauseExecution(120000 - (hub.uptime * 1000)) /* wait if the hub has not been running for at least two minutes -- allows telnet services to load on the hub and also allows Pella bridge time to boot up if the restart was due to a power outage */
 				} else {
-					displayInfoLog("Closing existing telnet connection (if any)")
 					telnetClose() /* closes telnet if it was already open */
+					displayInfoLog("Closed existing telnet connection (if any)")
 					pauseExecution(20000)
 				}
 			} catch(Exception ex) {
-				displayInfoLog("Closing existing telnet connection (if any)")
 				telnetClose() /* closes telnet if it was already open */
+				displayInfoLog("Could not obtain location.hubs; closed existing telnet connection (if any)")
 				pauseExecution(20000)
 			}
 			displayInfoLog("Opening telnet connection")
@@ -133,6 +134,8 @@ def sendMsg(String message)
     atomicState.lastMessageSent = message
 	sendHubCommand(new hubitat.device.HubAction(message, hubitat.device.Protocol.TELNET))
 	displayDebugLog("Telnet message sent: ${atomicState.lastMessageSent}")
+	pauseExecution(800) /* wait 0.8 seconds before clearing lastMessageSent */
+	atomicState.remove("lastMessageSent")
 }
 
 def refresh() 
@@ -185,15 +188,13 @@ def parse(String message) {
 		// } else if (message.contains("Insynctive Telnet Server")) {
 			// displayInfoLog("Connection established")
 		} else {
-			log.warn("Unable to parse message.  lastMessageSent: ${atomicState.lastMessageSent}; message: ${message}")
+			log.warn("Unable to parse message.  Last message sent: ${atomicState.lastMessageSent}; message received: ${message}")
 		}
 	} else if (message =~ /^\W*\d{3}\W*$/) {
 		parseDevices(message)
 	} else {
-		log.warn("Unable to parse message.  message: ${message}")
+		log.warn("Unable to parse message.  Message received: ${message}")
 	}
-	pauseExecution(500) /* wait 0.5 seconds before clearing lastMessageSent */
-	atomicState.remove("lastMessageSent")
 }
 
 def telnetStatus(String status) {
@@ -273,23 +274,23 @@ def parseIDResponse(lastMessageSent, message) {
 		switch(firstIDmatch) {
 			case "680925":
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
-				childDevice.setLabel("Front Door"); 
+				childDevice.setLabel("Front Door Lock"); 
 				break; 
 			case "680957": 
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
-				childDevice.setLabel("Deck Door"); 
+				childDevice.setLabel("Deck Door Lock"); 
 				break; 
 			case "6808FE": 
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
-				childDevice.setLabel("Garage Door"); 
+				childDevice.setLabel("Garage People Door Lock"); 
 				break; 
 			case "6808EB": 
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
-				childDevice.setLabel("North Patio Door"); 
+				childDevice.setLabel("North Patio Door Lock"); 
 				break; 
 			case "680960": 
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
-				childDevice.setLabel("South Patio Door"); 
+				childDevice.setLabel("South Patio Door Lock"); 
 				break; 
 			case "082404": 
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
@@ -318,6 +319,26 @@ def parseIDResponse(lastMessageSent, message) {
 			case "0822A0": 
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
 				childDevice.setLabel("Master Bedroom Window"); 
+				break; 
+			case "082145": 
+				displayDebugLog("Setting Label for: ${firstIDmatch}")
+				childDevice.setLabel("Deck Door"); 
+				break; 
+			case "0828B1": 
+				displayDebugLog("Setting Label for: ${firstIDmatch}")
+				childDevice.setLabel("Garage People Door"); 
+				break; 
+			case "082175": 
+				displayDebugLog("Setting Label for: ${firstIDmatch}")
+				childDevice.setLabel("North Patio Door"); 
+				break; 
+			case "082135": 
+				displayDebugLog("Setting Label for: ${firstIDmatch}")
+				childDevice.setLabel("South Patio Door"); 
+				break; 
+			case "08214B": 
+				displayDebugLog("Setting Label for: ${firstIDmatch}")
+				childDevice.setLabel("Front Door"); 
 				break; 
 		}
 		displayDebugLog("New Label: ${childDevice.label}")
@@ -354,6 +375,7 @@ def install() {
 			try {
 				addChildDevice('hubitat', "Pella Insynctive", "$device.deviceNetworkId-${i.toString().padLeft(3, "0")}", [name: "Pella Insynctive Device", isComponent: true])
 			} catch(Exception ex) {
+				log.error("Cannot create child device for ${i.toString().padLeft(3, "0")}")
 			}
 		}
 	}
@@ -375,11 +397,11 @@ def deleteChildren() {
 }
 
 private def displayDebugLog(message) {
-	if (debugLogging)
+	if (logEnable)
 		log.debug "${device.displayName}: ${message}"
 }
 
 private def displayInfoLog(message) {
-	if (infoLogging)
+	if (txtEnable)
 		log.info "${device.displayName}: ${message}"
 }
