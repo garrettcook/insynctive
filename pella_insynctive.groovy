@@ -13,6 +13,8 @@ v1.0.8 - various improvements
 v1.1.0 - significant improvements to scheduling apparatus, error handling, and other elements
 v1.1.1 - additional improvements to scheduling apparatus and error handling
 v1.1.2 - minor improvements to timing of qualifying a received message as a response to a sent message
+v1.1.3 - added parsing of battery status sent as supervisory signal
+v1.1.4 - corrected parsing of battery status being sent along with open/close signal
 */
 
 metadata {
@@ -224,6 +226,12 @@ def parseSupervisorySignal(message) {
 			childDevice.sendEvent(name: "contact", value: "closed", displayed: true)
 		} else if (message.contains("\$01") || message.contains("\$02")) {
 			childDevice.sendEvent(name: "contact", value: "open", displayed: true)
+		} else if (message.contains("\$20")) {
+			childDevice.sendEvent(name: "contact", value: "closed", displayed: true)
+			childDevice.sendEvent(name: "battery", value: "50", displayed: true, unit: "%")
+		} else if (message.contains("\$21") || message.contains("\$22")) {
+			childDevice.sendEvent(name: "contact", value: "open", displayed: true)
+			childDevice.sendEvent(name: "battery", value: "50", displayed: true, unit: "%")
 		}
 		childDevice.sendEvent(name: "lastStatusUpdate", value: new Date(), displayed: true)
 	}
@@ -340,6 +348,10 @@ def parseIDResponse(lastMessageSent, message) {
 				displayDebugLog("Setting Label for: ${firstIDmatch}")
 				childDevice.setLabel("Front Door"); 
 				break; 
+			case "0823F3": 
+				displayDebugLog("Setting Label for: ${firstIDmatch}")
+				childDevice.setLabel("North Bedroom Window"); 
+				break; 
 		}
 		displayDebugLog("New Label: ${childDevice.label}")
 	}
@@ -374,6 +386,7 @@ def install() {
 		for (i in 1..(atomicState.numberOfDevices)) {
 			try {
 				addChildDevice('hubitat', "Pella Insynctive", "$device.deviceNetworkId-${i.toString().padLeft(3, "0")}", [name: "Pella Insynctive Device", isComponent: true])
+				log.info("Created child device for ${i.toString().padLeft(3, "0")}")
 			} catch(Exception ex) {
 				log.error("Cannot create child device for ${i.toString().padLeft(3, "0")}")
 			}
